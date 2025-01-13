@@ -1,0 +1,3 @@
+/mnt/c/Users/Hamish/Documents/depthai_oak-d/build/CMakeFiles/out.dir
+/mnt/c/Users/Hamish/Documents/depthai_oak-d/build/CMakeFiles/edit_cache.dir
+/mnt/c/Users/Hamish/Documents/depthai_oak-d/build/CMakeFiles/rebuild_cache.dir
