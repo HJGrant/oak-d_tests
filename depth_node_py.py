@@ -1,10 +1,8 @@
-
 import cv2
 import depthai as dai
-import numpy as np
 import time
 from collections import deque
-
+import numpy as np
 
 class FPSCounter:
     def __init__(self):
@@ -23,81 +21,78 @@ class FPSCounter:
 
 fpsCounter = FPSCounter()
 
-# Closer-in minimum depth, disparity range is doubled (from 95 to 190):
-extended_disparity = False
-
-# Better accuracy for longer distance, fractional disparity 32-levels:
-subpixel = False
-
-# Better handling for occlusions:
-lr_check = False
-
-
 # Create pipeline
 pipeline = dai.Pipeline()
-#device_info = dai.DeviceInfo("169.254.1.222")
-
+device = dai.Device()
+FPS_COLOR=30.0
+FPS_DEPTH=110.0
 
 # Define sources and outputs
 monoLeft = pipeline.create(dai.node.MonoCamera)
 monoRight = pipeline.create(dai.node.MonoCamera)
 depth = pipeline.create(dai.node.StereoDepth)
-xout = pipeline.create(dai.node.XLinkOut)
-xout.setStreamName("disparity")
+camRgb = pipeline.create(dai.node.Camera)
+disparityOut = pipeline.create(dai.node.XLinkOut)
+rgbOut = pipeline.create(dai.node.XLinkOut)
 
-resolution = dai.MonoCameraProperties.SensorResolution.THE_400_P
+rgbOut.setStreamName("rgb")
+disparityOut.setStreamName("disp")
 
-# Properties
-monoLeft.setResolution(resolution)
+# Set up RGB camera
+camRgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+camRgb.setSize(680, 400)
+camRgb.setFps(FPS_COLOR)
+
+try:
+    calibData = device.readCalibration2()
+    lensPosition = calibData.getLensPosition(dai.CameraBoardSocket.CAM_A)
+    if lensPosition:
+        camRgb.initialControl.setManualFocus(lensPosition)
+except:
+    raise
+
+# Set up mono cameras
+monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoLeft.setCamera("left")
-monoRight.setResolution(resolution)
 monoRight.setCamera("right")
+monoLeft.setFps(FPS_DEPTH)
+monoRight.setFps(FPS_DEPTH)
 
-monoLeft.setFps(110.0)
-monoRight.setFps(110.0)
-
-# Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
+# Set up stereo depth configuration
 depth.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-
-# Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
-depth.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
-depth.setLeftRightCheck(lr_check)
-depth.setExtendedDisparity(extended_disparity)
-depth.setSubpixel(subpixel)
-#depth.setInputResolution(1280, 720)
-
+depth.setLeftRightCheck(True)
+depth.setExtendedDisparity(False)
+depth.setSubpixel(False)
 
 # Linking
 monoLeft.out.link(depth.left)
 monoRight.out.link(depth.right)
-depth.disparity.link(xout.input)
-
+depth.disparity.link(disparityOut.input)
+camRgb.video.link(rgbOut.input)
 
 # Connect to device and start pipeline
+with device:
+    device.startPipeline(pipeline)
 
-with dai.Device(pipeline) as device:
-    # Output queue will be used to get the disparity frames from the outputs defined above
-    q = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
-
-    fps_deque = deque(maxlen=10)  # Store the last 10 FPS values
-    prev_time = time.time() + 5
+    rgbQueue = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+    dispQueue = device.getOutputQueue(name="disp", maxSize=4, blocking=False)
 
     while True:
-        
-        inDisparity = q.get()  # blocking call, will wait until a new data has arrived
-        frame = inDisparity.getFrame()
+        frameRgb = rgbQueue.get().getCvFrame()
+        frameDisp = dispQueue.get().getFrame()
 
-        #display fps
+        # Display FPS
         fps = fpsCounter.tick()
-        cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(frameDisp, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # Normalization for better visualization
-        frame = (frame * (255 / depth.initialConfig.getMaxDisparity())).astype(np.uint8)
-        cv2.imshow("disparity", frame)
+        # Normalize for better visualization
+        frameDisp = (frameDisp * (255 / depth.initialConfig.getMaxDisparity())).astype(np.uint8)
+        cv2.imshow("disparity", frameDisp)
 
-        # Available color maps: https://docs.opencv.org/3.4/d3/d50/group__imgproc__colormap.html
-        frame = cv2.applyColorMap(frame, cv2.COLORMAP_JET)
-        cv2.imshow("disparity_color", frame)
+        frameDisp_color = cv2.applyColorMap(frameDisp, cv2.COLORMAP_JET)
+        cv2.imshow("disparity_color", frameDisp_color)
+        cv2.imshow("RGB", frameRgb)
 
         if cv2.waitKey(1) == ord('q'):
             break
